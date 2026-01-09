@@ -37,26 +37,6 @@ We use the pretrained BulkRNABert model to generate gene expression embeddings f
 * Also compares with PCA of raw TPM data
 * Outputs: `*.png` plots in `outputs/step3`
 
-## How to Reproduce
-
-```bash
-# Clone the repo
-$ git clone https://github.com/AatsBioinfo/depmap-bulkrnabert.git
-$ cd depmap-bulkrnabert
-
-# Set up environment
-$ apptainer exec --bind /fast:/fast container/python311.sif bash -lc "source env/.venv/bin/activate"
-
-# Step 1: Preprocessing
-$ python scripts/preprocess_depmap.py
-
-# Step 2: Inference (inside SLURM)
-$ sbatch scripts/run_inference.sbatch
-
-# Step 3: PCA/UMAP plots
-$ sbatch scripts/run_step3.sbatch
-```
-
 ## Key Files
 
 | File/Folder  | Description                        |
