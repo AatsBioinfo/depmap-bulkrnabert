@@ -55,3 +55,22 @@ Lessons learned
 	Understanding the forward pass is crucial for efficient inference.
 	Not all components of a model are necessary for every task.
 	Memory considerations strongly influence practical design choices on HPC systems.
+
+
+(Environment and container setup (Singularity)
+Why I used a container :Initially I ran into a lot of issues with version mismatches and BulkRNABert relies on a specific Python/JAX/Haiku software stack. On an HPC cluster, system Python packages can differ across nodes and change over time. To make the workflow reproducible and easier to run consistently, I used a Singularity container.
+
+The goal of using the container was:
+to lock the runtime environment (Ubuntu + Python packages)
+to avoid dependency issues on the cluster
+to ensure the same code produces the same outputs when rerun
+
+What the container contains (high level)
+
+I built the container using container/bulkrnabert.def with:
+Base OS: ubuntu:22.04
+Python + build tools
+Scientific Python packages: numpy, pandas, matplotlib, scikit-learn, tqdm
+BulkRNABert dependencies: jax[cpu] and dm-haiku
+
+The BulkRNABert code itself by copying multiomics-open-research into the image and installing it)
