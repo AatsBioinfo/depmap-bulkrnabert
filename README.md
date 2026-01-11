@@ -6,7 +6,8 @@ Overview
 We use the pretrained BulkRNABert model to generate gene expression embeddings from DepMap RNA-seq (TPM) data. Downstream analyses include PCA and UMAP to assess biological structure in the embedding space.
 Pipeline Steps
 1. Preprocessing
-- [Lab notes: DepMap preprocessing](LAB_NOTES.md)
+- [Lab notes: DepMap preprocessing](prep_LAB_NOTES.md)
+
 Script: scripts/preprocess_depmap.py
 
     Input: OmicsExpressionProteinCodingGenesTPMLogp1.csv from DepMap
