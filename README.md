@@ -68,3 +68,12 @@ Base OS: ubuntu:22.04
 Python + build tools
 Scientific Python packages: numpy, pandas, matplotlib, scikit-learn, tqdm
 BulkRNABert dependencies: jax[cpu] and dm-haiku. The BulkRNABert code itself by copying multiomics-open-research into the image and installing it)
+
+So as the next step I made graphs for raw tpm pca and depmap pca and also UMAP for depmap - But the clusters do not seem strongly separated. I searched for the cause, my questions were could it be because of the steps I skipped (the attention layers, mean pooling). So what does attention layers and mean pooling does to the data ? 
+
+* Attention is the main part of the transformer that learns gene–gene relationships.
+* By skipping it, I likely removed the strongest biological signal.
+* Mean pooling across ~19,000 genes weakens marker signal
+* Mean pooling treats all genes equally, so tissue-specific genes get averaged together with housekeeping genes and noise - separation becomes weaker.
+
+Maybe lets try : GPU (might not get more OOMs issues)
