@@ -1,79 +1,258 @@
 depmap-bulkrnabert
 
-This repository provides a reproducible pipeline to extract and evaluate BulkRNABert embeddings from DepMap bulk RNA-seq data (https://github.com/instadeepai/multiomics-open-research).
+This repository provides a reproducible pipeline to extract and evaluate **BulkRNABert embeddings** from DepMap bulk RNA-seq data.
 
-Overview
+Model source:
+[https://github.com/instadeepai/multiomics-open-research](https://github.com/instadeepai/multiomics-open-research)
 
-We use the pretrained BulkRNABert model to generate gene expression embeddings from DepMap RNA-seq (TPM) data. Downstream analyses include PCA and UMAP to assess biological structure in the embedding space.
-Pipeline Steps
-1. Preprocessing
-- [Lab notes: DepMap preprocessing](prep_LAB_NOTES.md)
+---
 
-Script: scripts/preprocess_depmap.py
+# 🎯 Objective
 
-- Input: OmicsExpressionProteinCodingGenesTPMLogp1.csv from DepMap
-- Maps Entrez → Ensembl IDs using NCBI gene2ensembl
-- Aggregates duplicate Ensembl IDs by mean
-- Aligns to common_gene_id.txt from BulkRNABert
-- Outputs: depmap_ensembl_aligned.npy, diagnostic plots (e.g. tpm_distribution.png)
+To evaluate whether pretrained gene-expression embeddings (BulkRNABert) preserve meaningful biological structure in DepMap cancer cell lines.
 
-Lessons Learned During Preprocessing
+Specifically:
 
-	1. Gene identifier consistency is critical
-	- Most preprocessing complexity came from harmonizing Entrez and Ensembl IDs. Even small mismatches can completely break model compatibility.
+* Do embeddings reflect tissue lineage?
+* How do embeddings compare to standard gene expression baselines (PCA, HVG)?
 
-	2. Model input assumptions must be read carefully
-	- BulkRNABert assumes a fixed gene order and full feature vector.
+---
 
-	3. Silent errors are the biggest risk
-	- Incorrect gene ordering or missing genes would not raise runtime errors but would invalidate results. Explicit checks (gene order, NaNs, summary statistics) are essential.
+# 🧬 Pipeline Overview
 
-	4. Zero-filling is a design choice, not a technical detail
-	- Filling missing genes with zeros encodes a biological assumption (“not expressed or not measured”).
+The workflow consists of three main stages:
 
-	5. Sanity checks save time later
-	- Simple plots (global distributions, housekeeping genes) quickly reveal major preprocessing errors.
+1. Preprocessing DepMap expression data
+2. Extracting BulkRNABert embeddings
+3. Downstream biological evaluation
 
-2. Embedding Inference
+---
 
-- [Embedding extraction lab notes](embedding_LAB_NOTES.md)
+# 1️⃣ Preprocessing
 
-Script: scripts/extract_embeddings_depmap.py
+Script: `scripts/preprocess_depmap.py`
 
-- Loads pretrained BulkRNABert from multiomics-open-research
-- Inputs: depmap_ensembl_aligned.npy
-- Runs forward pass in batches
-- Outputs: embeddings.npy (n_samples × 256)
+### Input
 
-Lessons learned
+* `OmicsExpressionProteinCodingGenesTPMLogp1.csv` (DepMap)
+* NCBI `gene2ensembl` mapping file
+* `common_gene_id.txt` from BulkRNABert
 
-	1. Pretrained models often require careful adaptation rather than direct application.
-	2. Understanding the forward pass is crucial for efficient inference.
-	3. Not all components of a model are necessary for every task.
-	4. Memory considerations strongly influence practical design choices on HPC systems.
+### Processing steps
 
+* Extract Entrez IDs from gene headers
+* Map Entrez → Ensembl (human only)
+* Aggregate duplicate Ensembl IDs (mean)
+* Align gene order to BulkRNABert’s required `common_gene_id.txt`
+* Zero-fill missing genes
+* Perform sanity checks
 
-(Environment and container setup (Singularity)
-Why I used a container :Initially I ran into a lot of issues with version mismatches and BulkRNABert relies on a specific Python/JAX/Haiku software stack. On an HPC cluster, system Python packages can differ across nodes and change over time. To make the workflow reproducible and easier to run consistently, I used a Singularity container.
+### Output
 
-The goal of using the container was:
-to lock the runtime environment (Ubuntu + Python packages)
-to avoid dependency issues on the cluster
-to ensure the same code produces the same outputs when rerun
+* `depmap_ensembl_aligned.npy`
+* Diagnostic plots:
 
-What the container contains (high level)
+  * Global TPM distribution
+  * Housekeeping gene expression
 
-I built the container using container/bulkrnabert.def with:
-Base OS: ubuntu:22.04
-Python + build tools
-Scientific Python packages: numpy, pandas, matplotlib, scikit-learn, tqdm
-BulkRNABert dependencies: jax[cpu] and dm-haiku. The BulkRNABert code itself by copying multiomics-open-research into the image and installing it)
+---
 
-So as the next step I made graphs for raw tpm pca and depmap pca and also UMAP for depmap - But the clusters do not seem strongly separated. I searched for the cause, my questions were could it be because of the steps I skipped (the attention layers, mean pooling). So what does attention layers and mean pooling does to the data ? 
+## Lessons Learned During Preprocessing
 
-* Attention is the main part of the transformer that learns gene–gene relationships.
-* By skipping it, I likely removed the strongest biological signal.
-* Mean pooling across ~19,000 genes weakens marker signal
-* Mean pooling treats all genes equally, so tissue-specific genes get averaged together with housekeeping genes and noise - separation becomes weaker.
+### 1. Gene identifier consistency is critical
 
-Maybe lets try : GPU (might not get more OOMs issues)
+Most complexity came from harmonizing Entrez and Ensembl IDs.
+Even small mismatches break compatibility silently.
+
+### 2. Model input assumptions must be respected
+
+BulkRNABert requires:
+
+* Fixed gene order
+* Full gene vector
+* No missing values
+
+### 3. Silent errors are dangerous
+
+Incorrect gene ordering does not throw runtime errors — but invalidates biological results.
+
+Explicit checks are essential:
+
+* Shape verification
+* NaN checks
+* Distribution plots
+
+### 4. Zero-filling is a biological assumption
+
+Zero-filling implies:
+
+* “Not expressed” or
+* “Not measured”
+
+This choice affects downstream interpretation.
+
+---
+
+# 2️⃣ Embedding Extraction
+
+Script: `scripts/extract_embeddings_depmap.py`
+
+### Input
+
+* `depmap_ensembl_aligned.npy`
+
+### Model
+
+* Pretrained BulkRNABert (TCGA checkpoint)
+* No fine-tuning
+* Mean pooling of token embeddings from layer 4
+
+### Output
+
+* `embeddings.npy` (n_samples × 256)
+
+---
+
+## HPC & Container Setup
+
+BulkRNABert depends on:
+
+* Specific JAX version
+* dm-haiku
+* Python 3.11
+
+To ensure reproducibility:
+
+* Built Singularity/Apptainer container (Ubuntu 22.04)
+* Installed pinned dependencies
+* Used CPU inference with batching
+* Used numpy memmap for memory safety
+
+This ensured:
+
+* Stable runtime environment
+* Reproducible embeddings
+* No cluster-level dependency conflicts
+
+---
+
+# 3️⃣ Downstream Analysis
+
+Evaluations performed:
+
+* PCA visualization
+* UMAP visualization
+* kNN lineage classification
+* Balanced accuracy
+* Macro F1 score
+
+Comparison methods:
+
+* BulkRNABert embeddings
+* PCA (all genes)
+* PCA (HVG 2000)
+
+---
+
+# 📊 Observations
+
+* Raw gene expression (HVG PCA) shows clear tissue separation.
+* BulkRNABert embeddings show weaker lineage separation.
+* Hematopoietic cancers form a tight cluster in both spaces.
+
+Quantitatively:
+
+* Expression PCA outperforms pretrained embeddings for lineage classification.
+
+---
+
+# Important Technical Reflection
+
+You previously suspected that weaker clustering might be due to:
+
+* Skipping attention layers
+* Using mean pooling
+
+Let’s clarify this correctly.
+
+---
+
+## What do attention layers do?
+
+Attention layers:
+
+* Model gene–gene relationships
+* Learn co-expression structure
+* Capture higher-order transcriptional programs
+
+If attention is removed:
+
+* The model reduces to a shallow embedding
+* Biological signal can weaken
+
+However:
+If you used the official forward pass with attention enabled (as in your final script), then attention was included.
+
+So weaker separation is unlikely due to skipped attention (if official inference was used).
+
+---
+
+## What does mean pooling do?
+
+Mean pooling:
+
+* Averages token embeddings across all genes
+* Treats all genes equally
+
+Biological implication:
+
+* Strong tissue markers get averaged with housekeeping genes
+* Fine lineage signal may dilute
+
+This is a real limitation of global pooling.
+
+But:
+This is how the model was designed and how embeddings are intended to be extracted.
+
+So this is not an error — it is a design choice.
+
+---
+
+# 🧠 Biological Interpretation
+
+Tissue identity is:
+
+* Strongly encoded in raw gene expression
+* Often driven by a small number of marker genes
+
+Pretrained tumor models:
+
+* Learn broader transcriptional programs
+* May emphasize global patterns over fine tissue markers
+
+Additionally:
+
+* BulkRNABert was trained on tumors
+* DepMap contains cell lines grown in vitro
+* Domain mismatch likely affects transfer
+
+---
+
+# 🚀 Next Steps
+
+Instead of debugging architecture:
+
+1. Compare against other foundation models (e.g., Flexynesis)
+
+---
+
+# Final Conclusion
+
+This project establishes a reproducible baseline evaluation of BulkRNABert embeddings on DepMap.
+
+For tissue lineage classification:
+
+* Standard expression PCA remains a strong baseline.
+* Pretrained tumor embeddings do not outperform simple expression methods.
+
+This provides a clear starting point for further model comparison and biological exploration.
