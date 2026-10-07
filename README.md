@@ -1,258 +1,89 @@
-depmap-bulkrnabert
+# depmap-bulkrnabert
 
-This repository provides a reproducible pipeline to extract and evaluate **BulkRNABert embeddings** from DepMap bulk RNA-seq data.
+A reproducible pipeline to extract **BulkRNABert** embeddings from DepMap bulk RNA-seq data and test whether they preserve tissue lineage better than standard expression baselines.
 
-Model source:
-[https://github.com/instadeepai/multiomics-open-research](https://github.com/instadeepai/multiomics-open-research)
+Model source: [instadeepai/multiomics-open-research](https://github.com/instadeepai/multiomics-open-research)
 
----
+## Question
 
-# 🎯 Objective
+Do embeddings from a pretrained gene-expression foundation model (BulkRNABert, TCGA checkpoint) capture the tissue lineage of DepMap cancer cell lines, and how do they compare with simple baselines such as PCA on gene expression?
 
-To evaluate whether pretrained gene-expression embeddings (BulkRNABert) preserve meaningful biological structure in DepMap cancer cell lines.
+## Result
 
-Specifically:
+Standard expression PCA outperformed the pretrained embeddings on every metric.
 
-* Do embeddings reflect tissue lineage?
-* How do embeddings compare to standard gene expression baselines (PCA, HVG)?
+| Representation | kNN purity | Accuracy | Balanced accuracy | Macro F1 |
+|---|---|---|---|---|
+| BulkRNABert embeddings (256 dimensions) | 0.346 | 0.507 | 0.398 | 0.415 |
+| PCA (20 components), all genes | 0.546 | 0.667 | 0.567 | 0.564 |
+| PCA (20 components), 2,000 most variable genes | **0.569** | **0.688** | **0.600** | **0.593** |
 
----
+Setup: 1,657 cell lines from 26 lineages (`OncotreeLineage`, lineages with at least 10 cell lines), kNN classifier with k = 10 and cosine distance, 5-fold stratified cross-validation.
 
-# 🧬 Pipeline Overview
+![UMAP of BulkRNABert embeddings coloured by lineage](figures/umap_embeddings_lineage.png)
 
-The workflow consists of three main stages:
+Hematopoietic cell lines form a tight cluster in both the embedding space and the expression space. Most other lineages separate clearly in expression PCA but overlap in the embedding space.
 
-1. Preprocessing DepMap expression data
-2. Extracting BulkRNABert embeddings
-3. Downstream biological evaluation
+## Pipeline
 
----
+| Step | Script | Output |
+|---|---|---|
+| 1. Preprocessing | `scripts/depmap_preprocessing.py` | `depmap_ensembl_aligned.npy` |
+| 2. Embedding extraction | `scripts/extract_embeddings_depmap.py` | `embeddings.npy` (samples × 256) |
+| 3. Evaluation | `scripts/step3_4_downstream_depmap.py` | plots and `metrics_summary.csv` |
 
-# 1️⃣ Preprocessing
+### 1. Preprocessing
 
-Script: `scripts/preprocess_depmap.py`
+Inputs:
 
-### Input
+- `OmicsExpressionProteinCodingGenesTPMLogp1.csv` (DepMap)
+- NCBI `gene2ensembl` mapping file
+- `common_gene_id.txt` from BulkRNABert
 
-* `OmicsExpressionProteinCodingGenesTPMLogp1.csv` (DepMap)
-* NCBI `gene2ensembl` mapping file
-* `common_gene_id.txt` from BulkRNABert
+Steps:
 
-### Processing steps
+- Extract Entrez IDs from the DepMap gene headers and map them to human Ensembl IDs.
+- Average duplicate Ensembl IDs.
+- Reorder genes to match the model's fixed list of 19,062 genes, zero-filling genes missing from DepMap.
+- Check shapes and missing values, and plot the global TPM distribution and housekeeping gene expression.
 
-* Extract Entrez IDs from gene headers
-* Map Entrez → Ensembl (human only)
-* Aggregate duplicate Ensembl IDs (mean)
-* Align gene order to BulkRNABert’s required `common_gene_id.txt`
-* Zero-fill missing genes
-* Perform sanity checks
+### 2. Embedding extraction
 
-### Output
+- Pretrained BulkRNABert (`bulk_rna_bert_tcga` checkpoint), loaded through the official API. No fine-tuning.
+- DepMap values are converted from log2(TPM+1) to log10(TPM+1), the scale the model expects.
+- Token embeddings from layer 4 are mean-pooled across genes to give one 256-dimensional vector per cell line.
+- Inference runs on CPU in batches, reading the input and writing the output as memory-mapped arrays to keep memory use low.
 
-* `depmap_ensembl_aligned.npy`
-* Diagnostic plots:
+### 3. Evaluation
 
-  * Global TPM distribution
-  * Housekeeping gene expression
+- PCA and UMAP plots coloured by lineage.
+- kNN purity: the fraction of each cell line's 10 nearest neighbours that share its lineage.
+- Cross-validated kNN lineage classification: accuracy, balanced accuracy and macro F1.
 
----
+## Running it
 
-## Lessons Learned During Preprocessing
+BulkRNABert needs Python 3.11 with specific versions of JAX and dm-haiku, so the pipeline runs inside an Apptainer/Singularity container.
 
-### 1. Gene identifier consistency is critical
+1. Build the container from `container/bulkrnabert.def`.
+2. Edit the paths at the top of each script and SLURM file to point to your data.
+3. Run the preprocessing script, then submit `scripts/run_inference.sbatch` and `run_downstream.sbatch` with `sbatch`.
 
-Most complexity came from harmonizing Entrez and Ensembl IDs.
-Even small mismatches break compatibility silently.
+## Interpretation
 
-### 2. Model input assumptions must be respected
+Three factors probably explain the weaker lineage signal in the embeddings:
 
-BulkRNABert requires:
+- **Mean pooling.** Averaging over all 19,062 gene tokens weights every gene equally, so the few marker genes that define a tissue are diluted by housekeeping genes. This is how the model's embeddings are meant to be extracted, so it is a limit of the design, not an error in the pipeline.
+- **Domain shift.** The model was trained on TCGA tumours, whereas DepMap contains cell lines grown in vitro.
+- **A strong baseline.** Tissue identity is strongly encoded in raw expression and often driven by a small number of marker genes, which PCA on variable genes captures directly.
 
-* Fixed gene order
-* Full gene vector
-* No missing values
+## Lessons from preprocessing
 
-### 3. Silent errors are dangerous
+- **Gene identifiers.** Most of the work was harmonising Entrez and Ensembl IDs. Small mismatches break compatibility with the model without raising an error.
+- **Silent failures.** Wrong gene order runs without errors but invalidates the result, so explicit checks on shape, missing values and distributions are essential.
+- **Zero-filling is an assumption.** A zero can mean "not expressed" or "not measured", and that choice affects interpretation.
 
-Incorrect gene ordering does not throw runtime errors — but invalidates biological results.
+## Limitations and next steps
 
-Explicit checks are essential:
-
-* Shape verification
-* NaN checks
-* Distribution plots
-
-### 4. Zero-filling is a biological assumption
-
-Zero-filling implies:
-
-* “Not expressed” or
-* “Not measured”
-
-This choice affects downstream interpretation.
-
----
-
-# 2️⃣ Embedding Extraction
-
-Script: `scripts/extract_embeddings_depmap.py`
-
-### Input
-
-* `depmap_ensembl_aligned.npy`
-
-### Model
-
-* Pretrained BulkRNABert (TCGA checkpoint)
-* No fine-tuning
-* Mean pooling of token embeddings from layer 4
-
-### Output
-
-* `embeddings.npy` (n_samples × 256)
-
----
-
-## HPC & Container Setup
-
-BulkRNABert depends on:
-
-* Specific JAX version
-* dm-haiku
-* Python 3.11
-
-To ensure reproducibility:
-
-* Built Singularity/Apptainer container (Ubuntu 22.04)
-* Installed pinned dependencies
-* Used CPU inference with batching
-* Used numpy memmap for memory safety
-
-This ensured:
-
-* Stable runtime environment
-* Reproducible embeddings
-* No cluster-level dependency conflicts
-
----
-
-# 3️⃣ Downstream Analysis
-
-Evaluations performed:
-
-* PCA visualization
-* UMAP visualization
-* kNN lineage classification
-* Balanced accuracy
-* Macro F1 score
-
-Comparison methods:
-
-* BulkRNABert embeddings
-* PCA (all genes)
-* PCA (HVG 2000)
-
----
-
-# 📊 Observations
-
-* Raw gene expression (HVG PCA) shows clear tissue separation.
-* BulkRNABert embeddings show weaker lineage separation.
-* Hematopoietic cancers form a tight cluster in both spaces.
-
-Quantitatively:
-
-* Expression PCA outperforms pretrained embeddings for lineage classification.
-
----
-
-# Important Technical Reflection
-
-You previously suspected that weaker clustering might be due to:
-
-* Skipping attention layers
-* Using mean pooling
-
-Let’s clarify this correctly.
-
----
-
-## What do attention layers do?
-
-Attention layers:
-
-* Model gene–gene relationships
-* Learn co-expression structure
-* Capture higher-order transcriptional programs
-
-If attention is removed:
-
-* The model reduces to a shallow embedding
-* Biological signal can weaken
-
-However:
-If you used the official forward pass with attention enabled (as in your final script), then attention was included.
-
-So weaker separation is unlikely due to skipped attention (if official inference was used).
-
----
-
-## What does mean pooling do?
-
-Mean pooling:
-
-* Averages token embeddings across all genes
-* Treats all genes equally
-
-Biological implication:
-
-* Strong tissue markers get averaged with housekeeping genes
-* Fine lineage signal may dilute
-
-This is a real limitation of global pooling.
-
-But:
-This is how the model was designed and how embeddings are intended to be extracted.
-
-So this is not an error — it is a design choice.
-
----
-
-# 🧠 Biological Interpretation
-
-Tissue identity is:
-
-* Strongly encoded in raw gene expression
-* Often driven by a small number of marker genes
-
-Pretrained tumor models:
-
-* Learn broader transcriptional programs
-* May emphasize global patterns over fine tissue markers
-
-Additionally:
-
-* BulkRNABert was trained on tumors
-* DepMap contains cell lines grown in vitro
-* Domain mismatch likely affects transfer
-
----
-
-# 🚀 Next Steps
-
-Instead of debugging architecture:
-
-1. Compare against other foundation models (e.g., Flexynesis)
-
----
-
-# Final Conclusion
-
-This project establishes a reproducible baseline evaluation of BulkRNABert embeddings on DepMap.
-
-For tissue lineage classification:
-
-* Standard expression PCA remains a strong baseline.
-* Pretrained tumor embeddings do not outperform simple expression methods.
-
-This provides a clear starting point for further model comparison and biological exploration.
+- Only one pooling strategy (mean) and one layer (4) were tested.
+- Lineage classification is a single task; the embeddings may do better on others, such as predicting gene dependency or drug response.
+- Next: compare with other models (for example Flexynesis) and with fine-tuned embeddings.
