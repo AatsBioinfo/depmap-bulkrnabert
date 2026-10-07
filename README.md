@@ -20,9 +20,25 @@ Standard expression PCA outperformed the pretrained embeddings on every metric.
 
 Setup: 1,657 cell lines from 26 lineages (`OncotreeLineage`, lineages with at least 10 cell lines), kNN classifier with k = 10 and cosine distance, 5-fold stratified cross-validation.
 
-![UMAP of BulkRNABert embeddings coloured by lineage](figures/umap_embeddings_lineage.png)
+![Summary metrics for the three representations](figures/metrics_comparison.png)
 
-Hematopoietic cell lines form a tight cluster in both the embedding space and the expression space. Most other lineages separate clearly in expression PCA but overlap in the embedding space.
+### Where the embeddings work and where they fail
+
+The gap is not uniform across lineages. Recall per lineage (the share of a lineage's cell lines that are classified correctly) shows three groups:
+
+- **Embeddings close to the baseline.** Lymphoid (0.95 vs 1.00), fibroblast (0.90 vs 1.00) and lung (0.72 vs 0.77). A plausible reason is that these lineages differ from the rest in broad expression programmes, which survive mean pooling.
+- **Embeddings far behind.** Pancreas (0.18 vs 0.71), pleura (0.36 vs 0.86), kidney (0.30 vs 0.79), eye (0.48 vs 0.87) and myeloid (0.55 vs 0.89). Expression PCA separates these lineages well, so the signal is in the data but is lost in the embedding.
+- **Hard for both.** Esophagus/stomach, biliary tract, bladder, thyroid, cervix and prostate stay below 0.30 with either method. Most are carcinomas, which are probably difficult to tell apart from bulk expression with a simple kNN classifier.
+
+Expression PCA is better in 23 of 26 lineages. In the other three the embeddings lead by at most 0.08, which is one or two cell lines.
+
+![Recall per lineage for embeddings and expression PCA](figures/per_lineage_recall.png)
+
+The UMAP below shows the six largest lineages in the embedding space (top row) and in expression space (bottom row).
+
+![UMAP of embeddings and expression, one panel per lineage](figures/umap_by_lineage.png)
+
+Full tables: [`results/metrics_summary.csv`](results/metrics_summary.csv) and [`results/per_lineage_recall.csv`](results/per_lineage_recall.csv).
 
 ## Pipeline
 
@@ -30,7 +46,8 @@ Hematopoietic cell lines form a tight cluster in both the embedding space and th
 |---|---|---|
 | 1. Preprocessing | `scripts/depmap_preprocessing.py` | `depmap_ensembl_aligned.npy` |
 | 2. Embedding extraction | `scripts/extract_embeddings_depmap.py` | `embeddings.npy` (samples × 256) |
-| 3. Evaluation | `scripts/step3_4_downstream_depmap.py` | plots and `metrics_summary.csv` |
+| 3. Evaluation | `scripts/step3_4_downstream_depmap.py` | summary metrics and exploratory plots |
+| 4. Figures and per-lineage results | `scripts/make_figures.py` | `figures/` and `results/` |
 
 ### 1. Preprocessing
 
@@ -56,9 +73,10 @@ Steps:
 
 ### 3. Evaluation
 
-- PCA and UMAP plots coloured by lineage.
 - kNN purity: the fraction of each cell line's 10 nearest neighbours that share its lineage.
 - Cross-validated kNN lineage classification: accuracy, balanced accuracy and macro F1.
+- Recall per lineage, from the same cross-validated predictions.
+- UMAP of the embeddings and of the expression baseline.
 
 ## Running it
 
@@ -67,6 +85,7 @@ BulkRNABert needs Python 3.11 with specific versions of JAX and dm-haiku, so the
 1. Build the container from `container/bulkrnabert.def`.
 2. Edit the paths at the top of each script and SLURM file to point to your data.
 3. Run the preprocessing script, then submit `scripts/run_inference.sbatch` and `run_downstream.sbatch` with `sbatch`.
+4. Submit `run_figures.sbatch` to create the figures and result tables. `scripts/make_figures.py` finds its input files under the folder given with `--base`, so it needs no path edits.
 
 ## Interpretation
 
